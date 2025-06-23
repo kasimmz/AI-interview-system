@@ -1,0 +1,20 @@
+[project]
+name = "ai-interview-cbot"
+version = "0.1.0"
+description = "This project is about developing a ats score generator for the job description of the candidates."
+authors = [
+    {name = "MD Kasim"}
+]
+readme = "README.md"
+requires-python = "^3.10"
+dependencies = [
+    "flask (>=3.1.1,<4.0.0)",
+    "sentence-transformers (>=4.1.0,<5.0.0)",
+    "pymupdf (>=1.26.1,<2.0.0)",
+    "scikit-learn (>=1.7.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
