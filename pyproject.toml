@@ -1,7 +1,7 @@
 [project]
 name = "ai-interview-cbot"
 version = "0.1.0"
-description = "This project is about developing a ats score generator for the job description of the candidates."
+description = "This project is about developing a AI interview system."
 authors = [
     {name = "MD Kasim"}
 ]
