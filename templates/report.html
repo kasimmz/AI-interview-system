@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <div class="bg-white rounded-xl shadow-md overflow-hidden p-8 mb-8">
+        <div class="flex justify-between items-start mb-8">
+            <div>
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Interview Report</h2>
+                <p class="text-gray-600">for {{ report.session_info.candidate_name }}</p>
+            </div>
+            <div class="bg-{% if report.results.overall_result == 'PASSED' %}green{% else %}red{% endif %}-100 text-{% if report.results.overall_result == 'PASSED' %}green{% else %}red{% endif %}-800 px-4 py-2 rounded-full font-medium">
+                {{ report.results.overall_result }}
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-50 p-6 rounded-lg">
+                <h3 class="font-bold text-gray-700 mb-2">Position</h3>
+                <p class="text-gray-800">{{ report.session_info.job_title }}</p>
+            </div>
+            
+            <div class="bg-gray-50 p-6 rounded-lg">
+                <h3 class="font-bold text-gray-700 mb-2">ATS Score</h3>
+                <p class="text-2xl font-bold {% if report.session_info.ats_score >= 70 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {{ report.session_info.ats_score }}%
+                </p>
+            </div>
+            
+            <div class="bg-gray-50 p-6 rounded-lg">
+                <h3 class="font-bold text-gray-700 mb-2">Interview Score</h3>
+                <p class="text-2xl font-bold {% if report.results.overall_score >= 70 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {{ report.results.overall_score }}%
+                </p>
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Performance Breakdown</h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-indigo-50 p-4 rounded-lg text-center">
+                    <div class="text-3xl font-bold text-indigo-600 mb-2">{{ report.performance_breakdown.technical_skills }}%</div>
+                    <div class="text-gray-700 font-medium">Technical Skills</div>
+                </div>
+                <div class="bg-blue-50 p-4 rounded-lg text-center">
+                    <div class="text-3xl font-bold text-blue-600 mb-2">{{ report.performance_breakdown.behavioral }}%</div>
+                    <div class="text-gray-700 font-medium">Behavioral</div>
+                </div>
+                <div class="bg-purple-50 p-4 rounded-lg text-center">
+                    <div class="text-3xl font-bold text-purple-600 mb-2">{{ report.performance_breakdown.situational }}%</div>
+                    <div class="text-gray-700 font-medium">Situational</div>
+                </div>
+                <div class="bg-teal-50 p-4 rounded-lg text-center">
+                    <div class="text-3xl font-bold text-teal-600 mb-2">{{ report.performance_breakdown.role_specific }}%</div>
+                    <div class="text-gray-700 font-medium">Role Specific</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Strengths</h3>
+            <div class="flex flex-wrap gap-2">
+                {% for strength in report.strengths %}
+                <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full">{{ strength }}</span>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Areas for Improvement</h3>
+            <div class="flex flex-wrap gap-2">
+                {% for area in report.improvement_areas %}
+                <span class="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full">{{ area }}</span>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Recommendations</h3>
+            <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                {% for recommendation in report.recommendations %}
+                <li>{{ recommendation }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+
+        <div class="mb-8">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Question & Answer Review</h3>
+            <div class="space-y-6">
+                {% for qa in report.detailed_qa %}
+                <div class="border border-gray-200 rounded-lg p-4">
+                    <div class="font-bold text-gray-800 mb-2">Q{{ qa.question_no }}: {{ qa.question }}</div>
+                    <div class="text-gray-600 mb-3">{{ qa.response }}</div>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <span class="font-medium">Score:</span>
+                            <span class="ml-2 font-bold {% if qa.score >= 70 %}text-green-600{% elif qa.score >= 50 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                                {{ qa.score }}%
+                            </span>
+                        </div>
+                        <div class="text-sm text-gray-500">{{ qa.question_type|title }}</div>
+                    </div>
+                    {% if qa.evaluation.feedback %}
+                    <div class="mt-2 text-sm text-gray-600">
+                        <span class="font-medium">Feedback:</span> {{ qa.evaluation.feedback }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="text-center">
+            <a href="{{ url_for('index') }}" 
+               class="bg-indigo-600 text-white py-3 px-6 rounded-md hover:bg-indigo-700 transition font-medium inline-block">
+                Start New Interview
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+
+{% block title %}AI Interview - Question {{ question_num }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <!-- Interview Header -->
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center">
+                <i class="fas fa-comments text-2xl text-indigo-600 mr-3"></i>
+                <h2 class="text-2xl font-bold text-gray-800">AI Interview Session</h2>
+            </div>
+            <div class="text-right">
+                <div class="text-sm text-gray-600">Question</div>
+                <div class="text-xl font-bold text-indigo-600" id="question-counter">{{ question_num }}/{{ total_questions }}</div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div class="flex items-center mb-4">
+            <div class="flex-1 bg-gray-200 rounded-full h-3">
+                <div class="bg-indigo-600 h-3 rounded-full progress-bar transition-all duration-500" 
+                     id="progress-bar" style="width: {{ (question_num/total_questions)*100 }}%"></div>
+            </div>
+            <span class="ml-4 text-sm text-gray-600" id="progress-text">{{ ((question_num/total_questions)*100)|round|int }}% Complete</span>
+        </div>
+        
+        <!-- Question Type Badge -->
+        <div class="flex justify-center">
+            <span class="bg-indigo-100 text-indigo-800 px-4 py-2 rounded-full text-sm font-medium">
+                <i class="fas fa-tag mr-2"></i>{{ question.type|title }} Question
+            </span>
+        </div>
+    </div>
+
+    <!-- Chat Interface -->
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="chatbot-container p-6">
+            <div class="chatbot-messages" id="chatbot-messages">
+                <!-- Initial bot message will be added here -->
+            </div>
+            
+            <div class="chatbot-input mt-4">
+                <form id="interview-form" class="space-y-4">
+                    <textarea id="user-answer" 
+                              placeholder="Type your answer here... Be detailed and specific." 
+                              rows="4"
+                              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition"
+                              required></textarea>
+                    <div class="flex justify-between items-center">
+                        <div class="text-sm text-gray-500" id="word-count">0 words</div>
+                        <button type="submit" 
+                                id="submit-button"
+                                class="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition font-medium flex items-center">
+                            <i class="fas fa-paper-plane mr-2"></i> Submit Answer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden data for JavaScript -->
+<script type="application/json" id="question-data">{{ question | tojson | safe if question else '{}' }}</script>
+<script type="application/json" id="config-data">{"total_questions": {{ total_questions }}}</script>
+
+<!-- CSS Styles -->
+<style>
+.chatbot-messages {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.message {
+    display: flex;
+    margin-bottom: 1rem;
+    align-items: flex-start;
+}
+
+.bot-message {
+    justify-content: flex-start;
+}
+
+.user-message {
+    justify-content: flex-end;
+}
+
+.message-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.bot-message .message-avatar {
+    background-color: #4f46e5;
+    color: white;
+    margin-right: 0.75rem;
+}
+
+.user-message .message-avatar {
+    background-color: #10b981;
+    color: white;
+    margin-left: 0.75rem;
+}
+
+.message-content {
+    max-width: 70%;
+}
+
+.message-text {
+    padding: 0.75rem 1rem;
+    border-radius: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    word-wrap: break-word;
+}
+
+.bot-message .message-text {
+    background-color: white;
+    border: 1px solid #e5e7eb;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.user-message .message-text {
+    background-color: #4f46e5;
+    color: white;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+    .message-content {
+        max-width: 85%;
+    }
+}
+
+.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+</style>
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Get DOM elements
+    const chatbotMessages = document.getElementById('chatbot-messages');
+    const interviewForm = document.getElementById('interview-form');
+    const userAnswer = document.getElementById('user-answer');
+    const wordCount = document.getElementById('word-count');
+    const submitButton = document.getElementById('submit-button');
+    const progressBar = document.getElementById('progress-bar');
+    const questionCounter = document.getElementById('question-counter');
+    const progressText = document.getElementById('progress-text');
+    
+    // Get data from script tags
+    let questionData = {};
+    let configData = {};
+    
+    try {
+        const questionScript = document.getElementById('question-data');
+        const configScript = document.getElementById('config-data');
+        
+        if (questionScript) {
+            questionData = JSON.parse(questionScript.textContent);
+        }
+        if (configScript) {
+            configData = JSON.parse(configScript.textContent);
+        }
+    } catch (error) {
+        console.error('Error parsing data:', error);
+    }
+    
+    // Auto-resize textarea and update word count
+    function autoResize(textarea) {
+        if (!textarea) return;
+        
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+        
+        // Update word count
+        const words = textarea.value.trim() ? textarea.value.trim().split(/\s+/).length : 0;
+        if (wordCount) {
+            wordCount.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+        }
+    }
+    
+    // Add bot message
+    function addBotMessage(text) {
+        if (!chatbotMessages) return;
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message bot-message animate-fade-in';
+        messageDiv.innerHTML = `
+            <div class="message-avatar">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div class="message-content">
+                <div class="message-text">${escapeHtml(text || 'Question loading...')}</div>
+            </div>
+        `;
+        chatbotMessages.appendChild(messageDiv);
+        chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+    }
+    
+    // Add user message
+    function addUserMessage(text) {
+        if (!chatbotMessages) return;
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message user-message animate-fade-in';
+        messageDiv.innerHTML = `
+            <div class="message-content">
+                <div class="message-text">${escapeHtml(text)}</div>
+            </div>
+            <div class="message-avatar">
+                <i class="fas fa-user"></i>
+            </div>
+        `;
+        chatbotMessages.appendChild(messageDiv);
+        chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+    }
+    
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // Update progress
+    function updateProgress(questionNum, totalQuestions) {
+        const progressPercent = (questionNum / totalQuestions) * 100;
+        
+        if (progressBar) {
+            progressBar.style.width = `${progressPercent}%`;
+        }
+        if (questionCounter) {
+            questionCounter.textContent = `${questionNum}/${totalQuestions}`;
+        }
+        if (progressText) {
+            progressText.textContent = `${Math.round(progressPercent)}% Complete`;
+        }
+    }
+    
+    // Set form state
+    function setFormState(enabled) {
+        if (userAnswer) {
+            userAnswer.disabled = !enabled;
+        }
+        if (submitButton) {
+            submitButton.disabled = !enabled;
+            if (enabled) {
+                submitButton.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Submit Answer';
+                submitButton.classList.remove('disabled');
+            } else {
+                submitButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Processing...';
+                submitButton.classList.add('disabled');
+            }
+        }
+    }
+    
+    // Add initial question
+    if (questionData && questionData.question) {
+        addBotMessage(questionData.question);
+    } else {
+        addBotMessage('Error: Question not loaded. Please refresh the page.');
+    }
+    
+    // Set up event listeners
+    if (userAnswer) {
+        userAnswer.addEventListener('input', function() {
+            autoResize(this);
+        });
+        userAnswer.focus();
+    }
+    
+    // Handle form submission
+    if (interviewForm) {
+        interviewForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const answer = userAnswer ? userAnswer.value.trim() : '';
+            
+            if (!answer) {
+                alert('Please provide an answer before submitting.');
+                return;
+            }
+            
+            // Add user message
+            addUserMessage(answer);
+            if (userAnswer) {
+                userAnswer.value = '';
+                autoResize(userAnswer);
+            }
+            
+            // Disable form while processing
+            setFormState(false);
+            
+            // Send answer to server
+            fetch('{{ url_for("submit_answer") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ answer: answer })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === 'continue') {
+                    // Update progress
+                    updateProgress(data.question_num, configData.total_questions);
+                    
+                    // Add next question after delay
+                    setTimeout(() => {
+                        if (data.next_question && data.next_question.question) {
+                            addBotMessage(data.next_question.question);
+                        } else {
+                            addBotMessage('Error loading next question.');
+                        }
+                        
+                        // Re-enable form
+                        setFormState(true);
+                        if (userAnswer) {
+                            userAnswer.focus();
+                        }
+                    }, 1000);
+                    
+                } else if (data.status === 'complete') {
+                    addBotMessage('Interview completed! Generating your report...');
+                    
+                    // Redirect to report page
+                    setTimeout(() => {
+                        window.location.href = '{{ url_for("complete_report") }}';
+                    }, 2000);
+                } else {
+                    console.error('Unexpected response status:', data.status);
+                    addBotMessage('Sorry, there was an error processing your response.');
+                    setFormState(true);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                addBotMessage('Network error. Please check your connection and try again.');
+                setFormState(true);
+            });
+        });
+    }
+});
+</script>
+{% endblock %}
+{% endblock %}
