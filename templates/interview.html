@@ -279,6 +279,79 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Alternative submit function (for external calls)
+    window.submitAnswer = function() {
+        const answer = document.getElementById('user-answer').value.trim();
+        if (!answer) {
+            alert('Please provide an answer before submitting.');
+            return;
+        }
+
+        // Show loading state
+        const submitBtn = document.getElementById('submit-button');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Submitting...';
+        submitBtn.disabled = true;
+
+        fetch('{{ url_for("submit_answer") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ answer: answer })
+        })
+        .then(response => {
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers);
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Success:', data);
+            
+            if (data.status === 'continue') {
+                // Load next question
+                loadNextQuestion(data.next_question, data.question_num);
+            } else if (data.status === 'complete') {
+                // Redirect to report
+                window.location.href = '{{ url_for("complete_report") }}';
+            }
+        })
+        .catch(error => {
+            console.error('Error details:', error);
+            alert('Network error occurred. Please check your connection and try again.');
+        })
+        .finally(() => {
+            // Reset button state
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+        });
+    }
+    
+    // Alternative load next question function
+    window.loadNextQuestion = function(question, questionNum) {
+        // Add the new question as a bot message
+        if (question && question.question) {
+            addBotMessage(question.question);
+        }
+        
+        // Update progress
+        updateProgress(questionNum, configData.total_questions);
+        
+        // Clear the answer input
+        if (userAnswer) {
+            userAnswer.value = '';
+            autoResize(userAnswer);
+            userAnswer.focus();
+        }
+        
+        // Re-enable form
+        setFormState(true);
+    }
+    
     // Add initial question
     if (questionData && questionData.question) {
         addBotMessage(questionData.question);

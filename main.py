@@ -2,7 +2,8 @@ from fileinput import filename
 import os
 import numpy as np
 import fitz
-from flask import Flask, request, render_template, jsonify, session, redirect, url_for  
+from flask import Flask, request, render_template, jsonify, session, redirect, url_for
+from flask_cors import CORS  
 from werkzeug.utils import secure_filename
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -23,17 +24,17 @@ import nltk
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
-    nltk.download('punkt')
+    nltk.download('punkt',quiet=True)
 
 try:
     nltk.data.find('taggers/averaged_perceptron_tagger') 
 except LookupError:
-    nltk.download('averaged_perceptron_tagger')
+    nltk.download('averaged_perceptron_tagger', quiet=True)
 
 try:
     nltk.data.find('corpora/wordnet')
 except LookupError:
-    nltk.download('wordnet')
+    nltk.download('wordnet', quiet=True)
 
 # Optional - downloads all TextBlob corpora
 download_all()
@@ -41,6 +42,7 @@ download_all()
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -135,7 +137,7 @@ def init_db():
         )
     ''')
 
-    #Interview questions table
+    #Interview questions table -updated to store questions even without responses    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS interview_qa (
             qa_id INTEGER PRIMARY KEY,
@@ -143,10 +145,10 @@ def init_db():
             question_no INTEGER,
             question_text TEXT,       
             question_type TEXT,
-            response_text TEXT,
-            response_score REAL,
-            evaluation_details TEXT,                     
-            FOREIGN KEY (session_id) REFERENCES interview_sessions(session_id)
+            response_text TEXT DEFAULT '',
+            response_score REAL DEFAULT 0,
+            evaluation_details TEXT DEFAULT '',               
+            FOREIGN KEY (session_id) REFERENCES interview_sessions (session_id) 
         )
     ''')
     conn.commit()
@@ -156,9 +158,12 @@ init_db()
 
 def extract_text_from_pdf(pdf_path):
     text = ""
-    with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text += page.get_text()
+    try:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                text += page.get_text()
+    except Exception as e:
+        print(f"Error extracting pdf:{str(e)}")
     return text
 
 def cos_similarity(resume_text,job_desc):
@@ -250,7 +255,7 @@ def calculate_skill_match(resume_keywords, job_desc_keywords):
     return round((matched_skills / len(job_desc_keywords)) * 100, 2)
 
 class InterviewQuestionGenerator:
-    def __init__(self, questions_file = r"data\questions_ds.json"):
+    def __init__(self, questions_file = os.path.join("data","questions_ds.json")):
         try:
             with open(questions_file) as f:
                 self.question_bank = json.load(f)
@@ -321,85 +326,122 @@ class ResponseEvaluator:
 
     def evaluate_response(self, question, answer,question_type):
         """evaluate interview response"""
-        if not answer or answer.strip() == "":
-            return{
-                'technical_accuracy': 0.0,
-                'communication_clarity': 0.0,
-                'relevance': 0.0,
-                'completeness': 0.0,
-                'overall_score': 0.0,
-                'word_count': 0,
-                'feedback': "No response provided"
-            }
+        try:
+            if not answer or answer.strip() == "":
+                return{
+                    'technical_accuracy': 0.0,
+                    'communication_clarity': 0.0,
+                    'relevance': 0.0,
+                    'completeness': 0.0,
+                    'overall_score': 0.0,
+                    'word_count': 0,
+                    'feedback': "No response provided"
+                }
+            word_count = len(answer)
+            sentence_count = 1 
+            try:
+                #text analysis
+                blob = TextBlob(answer)
+                sentence_count = len(blob.sentences)
+                if sentence_count==0:
+                    sentence_count=1
+            except Exception as blob_error:
+                print(f"TextBlob Error: {str(blob.sentences)}")
+                #fallback: count sentences by periods
+                sentence_count = max(1, answer.count('.') + answer.count('!') +answer.count('?'))
+
+            #basic scoring algorithm
+            scores = {}
+
+            #communication clarity
+            if word_count < 20:
+                scores['communication_clarity'] = 40
+            elif word_count < 50:
+                scores['communication_clarity'] = 60
+            elif word_count < 100:
+                scores['communication_clarity'] = 80
+            else:
+                scores['communication_clarity'] = 90
+
+            #relevence 
+            try:
+                question_words = set(question.lower().split())
+                answer_words = set(answer.lower().split())
+                relevance_ratio = len(question_words & answer_words) / len(question_words) if question_words else 0
+                scores['relevance'] = min(90, relevance_ratio * 100 + 30)
+            except Exception:
+                scores['relevance'] = 50  # Default if error occurs
+
+            #completeness
+            if word_count>=30 and sentence_count>=2:
+                scores['completeness'] = 80
+            elif word_count>=15:
+                scores['completeness'] = 60
+            else:
+                scores['completeness'] = 40
+
+            #technical accuracy
+            try:
+                blob = TextBlob(answer)
+                sentiment = blob.sentiment.polarity
+                if sentiment > 0:
+                    scores['technical_accuracy'] = 70 + (sentiment * 20)
+                else:
+                    scores['technical_accuracy'] = 50
+            except Exception:
+                #fallback: base score on word count and question type
+                if question_type == 'technical':
+                    scores['technical_accuracy'] = min(80, 40 + (word_count* 0.5))        
+                else:
+                    scores['technical_accuracy'] = 65
         
-        #text analysis
-        blob = TextBlob(answer)
-        word_count = len(answer.split())
-        sentence_count = len(blob.sentences)
+             #overall score
+            overall_score = sum(scores.values()) / len(scores)
 
-        #basic scoring algorithm
-        scores = {}
-
-        #communication clarity
-        if word_count < 20:
-            scores['communication_clarity'] = 40
-        elif word_count < 50:
-            scores['communication_clarity'] = 60
-        elif word_count < 100:
-            scores['communication_clarity'] = 80
-        else:
-            scores['communication_clarity'] = 90
-
-        #relevence 
-        question_words = set(question.lower().split())
-        answer_words = set(answer.lower().split())
-        relevance_ratio = len(question_words & answer_words) / len(question_words) if question_words else 0
-        scores['relevance'] = min(90, relevance_ratio * 100 + 30)
-
-        #completeness
-        if word_count>=30 and sentence_count>=2:
-            scores['completeness'] = 80
-        elif word_count>=15:
-            scores['completeness'] = 60
-        else:
-            scores['completeness'] = 40
-
-        #technical accuracy
-        sentiment = blob.sentiment.polarity
-        if sentiment > 0:
-            scores['technical_accuracy'] = 70 + (sentiment * 20)
-        else:
-            scores['technical_accuracy'] = 50
-
-        #overall score
-        overall_score = sum(scores.values()) / len(scores)
-
-        result = {
-            'technical_accuracy': float(round(scores['technical_accuracy'], 2)),
-            'communication_clarity': float(round(scores['communication_clarity'], 2)),
-            'relevance': float(round(scores['relevance'], 2)),
-            'completeness': float(round(scores['completeness'], 2)),
-            'overall_score': float(round(overall_score, 2)),
-            'word_count': int(word_count),
-            'feedback': self.generate_feedback(scores, word_count)
-        }
-        return convert_numpy_types(result)
+            result = {
+                'technical_accuracy': float(round(scores['technical_accuracy'], 2)),
+                'communication_clarity': float(round(scores['communication_clarity'], 2)),
+                'relevance': float(round(scores['relevance'], 2)),
+                'completeness': float(round(scores['completeness'], 2)),
+                'overall_score': float(round(overall_score, 2)),
+                'word_count': int(word_count),
+                'feedback': self.generate_feedback(scores, word_count)
+            }
+            return convert_numpy_types(result)
+    
+        except Exception as e:
+            print(f"Error evaluating response: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Return default scores in case of error
+            return {
+                'technical_accuracy': 50.0,
+                'communication_clarity': 50.0,
+                'relevance': 50.0,
+                'completeness': 50.0,
+                'overall_score': 50.0,
+                'word_count': len(answer.split()) if answer else 0,
+                'feedback': "Response evaluted with basic scoring due to processing error."
+            }
 
     def generate_feedback(self, scores, word_count):
         """Generate feedback based on scores"""
-        feedback = []
-        if scores['communication_clarity'] < 60:
-            feedback.append("Try to provide more detailed answers with clear explanations.")
-        if scores['relevance'] < 60:
-            feedback.append("Focus more on directly answering the question asked.")
-        if scores['completeness'] < 60:
-            feedback.append("Provide more comprehensive answers with examples.")
-        if word_count < 30:
-            feedback.append("Considerproviding more detailed explanations.")
-        if not feedback:
-            feedback.append("Good job! Keep up the good work.")
+        try:
+            feedback = []
+            if scores['communication_clarity'] < 60:
+                feedback.append("Try to provide more detailed answers with clear explanations.")
+            if scores['relevance'] < 60:
+                feedback.append("Focus more on directly answering the question asked.")
+            if scores['completeness'] < 60:
+                feedback.append("Provide more comprehensive answers with examples.")
+            if word_count < 30:
+                feedback.append("Considerproviding more detailed explanations.")
+            if not feedback:
+                feedback.append("Good job! Keep up the good work.")
 
-        return " ".join(feedback)
+            return " ".join(feedback)
+        except Exception:
+            return "Response received and evaluated."
 
 class InterviewReportGenerator:
     def __init__(self):
@@ -546,18 +588,56 @@ class InterviewReportGenerator:
 # Initialize helper classes
 question_generator = InterviewQuestionGenerator()
 response_evaluator = ResponseEvaluator()
-report_generator = InterviewReportGenerator()                        
+report_generator = InterviewReportGenerator()  
+
+def get_db_connection():
+    """Get a database connection"""
+    try:
+        conn = sqlite3.connect('interview_system.db')
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        print(f"Database connection error: {str(e)}")
+        raise
+
+def execute_db_query(query, params=None, fetch=False):
+    """Execute a database query with error handling"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+
+        if fetch:
+            result = cursor.fechall()
+            return result
+        else:
+            conn.commit()
+            return cursor.rowcount
+    except Exception as e:
+        print(f"Database query error:{str(e)}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()        
+
 
 @app.route("/", methods = ['GET', 'POST'])    
 def index():
     if request.method == 'POST':
-        if"resume" not in request.files:
+        if "resume" not in request.files:
             return "NO File was uploaded.", 400
         file = request.files["resume"]
-        job_desc =request.form["job_desc"]
+        job_desc = request.form["job_desc"]
         candidate_name = request.form.get("candidate_name", "Unknown")
 
-        if file.filename =="" or job_desc.strip() =="":
+        if file.filename == "" or job_desc.strip() == "":
             return "Invalid Input", 400
 
         filename = secure_filename(file.filename)
@@ -567,119 +647,197 @@ def index():
         resume_text = extract_text_from_pdf(filepath)
         ats_analysis = enhanced_ats_analysis(resume_text, job_desc)
 
-        #store interview session in database
+        # Store interview session in database AND session
         session['candidate_name'] = str(candidate_name)
-        session['job_desc'] = str(job_desc)
-        session['resume_text'] = str(resume_text)
+        session['job_desc'] = str(job_desc)  # Keep this in session for now
+        session['resume_text'] = str(resume_text)  # Keep this in session for now
         session['ats_analysis'] = convert_numpy_types(ats_analysis)
 
         return render_template("index.html",
-                                score = float(ats_analysis['overall_score']),
-                                analysis = convert_numpy_types(ats_analysis),
-                                threshold = ATS_THRESHOLD)
+                               score=float(ats_analysis['overall_score']),
+                               analysis=convert_numpy_types(ats_analysis),
+                               threshold=ATS_THRESHOLD)
     
     return render_template("index.html", score=None)
 
 @app.route("/start_interview")
 def start_interview():
     """start the interview phase"""
-    if 'ats_analysis'not in session or not session['ats_analysis']['threshold_passed']:
+    if 'ats_analysis' not in session or not session['ats_analysis']['threshold_passed']:
         return redirect(url_for('index'))
     
-    #create interview session
+    # Check if we have the required data in session
+    if 'job_desc' not in session or 'resume_text' not in session:
+        return redirect(url_for('index'))
+    
+    # Create interview session
     session_id = str(uuid.uuid4())
     session['interview_session_id'] = session_id
 
-    #generate questions
+    # Generate questions BEFORE removing data from session
     questions = question_generator.generate_questions(
         session['job_desc'],
         session['resume_text'],
         TOTAL_INTERVIEWS_QUESTIONS
     )
 
-    session['interview_questions'] = convert_numpy_types(questions)
-    session['current_question'] = 0
-    session['responses'] = []
-
-    #save session to database
+    # Store questions in database
     conn = sqlite3.connect('interview_system.db')
     cursor = conn.cursor()
+    
+    # Save session to database
     cursor.execute('''
         INSERT INTO interview_sessions
         (session_id, candidate_name, job_title, ats_score, status, start_time)
         VALUES (?, ?, ?, ?, ?, ?)
-    ''', (session_id, session['candidate_name'],"job Position",
-          session['ats_analysis']['overall_score'],"IN_PROGRESS",
+    ''', (session_id, session['candidate_name'], "Job Position",
+          session['ats_analysis']['overall_score'], "IN_PROGRESS",
           datetime.now().isoformat()))
+    
+    # Save questions to database
+    for i, question in enumerate(questions):
+        cursor.execute('''
+            INSERT INTO interview_qa
+            (session_id, question_no, question_text, question_type, response_text, response_score, evaluation_details)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (session_id, question['number'], question['question'], question['type'], '', 0, ''))
+    
     conn.commit()
     conn.close()
+
+    # NOW remove large data from session to reduce cookie size
+    session['current_question'] = 0
+    session.pop('resume_text', None)
+    session.pop('job_desc', None)
 
     return render_template("interview.html", 
                            question=questions[0], 
                            question_num=1,
-                           total_questions= len(questions))                                     
+                           total_questions=len(questions))
 
 @app.route("/submit_answer", methods=['POST'])
 def submit_answer():
     """Submit interview answer and evaluate"""
-    if 'interview_session_id' not in session:
-        return jsonify({'error': 'Interview session not found'}), 400
+    try:
+        print("=== Submit Answer Route Called ===")
+        print(f"Session keys: {list(session.keys())}")
+        
+        if 'interview_session_id' not in session:
+            print("Error: Interview session not found in session")
+            return jsonify({'error': 'Interview session not found'}), 400
+        
+        data = request.get_json()
+        if not data:
+            print("Error: No JSON data received")
+            return jsonify({'error': 'No data received'}), 400
+            
+        answer = data.get('answer', '').strip()
+        print(f"Received answer: {answer[:100]}...")  # Log first 100 chars
+        
+        current_q_index = session.get('current_question', 0)
+        
+        #get questions from db instead of session
+        conn = sqlite3.connect('interview_system.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT question_no, question_text, question_type
+            FROM interview_qa
+            WHERE session_id = ?
+            ORDER BY question_no
+        ''', (session['interview_session_id'],))
+        questions_data = cursor.fetchall()
+        conn.close()
+
+        if not questions_data:
+            print("Error: No interview questions found in session")
+            return jsonify({'error': 'Interview questions not found'}), 400
+            
+        if current_q_index >= len(questions_data):
+            print("Error: Question index out of range")
+            return jsonify({'error': 'Invalid question index'}), 400
+            
+        current_question_data= questions_data[current_q_index]
+        current_question = {
+            'number': current_question_data[0],
+            'question': current_question_data[1],
+            'type': current_question_data[2]
+        }
+
+        print(f"Processing question {current_q_index + 1}: {current_question['question'][:50]}...")  # Log first 50 chars
+              
+
+        # Evaluate response with error handling
+        try:
+            evaluation = response_evaluator.evaluate_response(
+                current_question['question'],
+                answer,
+                current_question['type']
+            )
+            print(f"Evaluation completed: {evaluation.get('overall_score', 'N/A')}")
+        except Exception as eval_error:
+            print(f"Error during evaluation: {str(eval_error)}")
+            return jsonify({'error': 'Error evaluating response'}), 500
+
+        # Save response to database with error handling
+        try:
+            conn = sqlite3.connect('interview_system.db')
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE interview_qa
+                SET response_text = ?, response_score = ?, evaluation_details = ?
+                WHERE session_id = ? AND question_no = ? 
+            ''', (
+                answer, 
+                float(evaluation['overall_score']),
+                json.dumps(convert_numpy_types(evaluation)),
+                session['interview_session_id'],
+                current_question['number']
+            ))
+            conn.commit()
+            conn.close()
+            print("Response saved to database successfully")
+        except Exception as db_error:
+            print(f"Database error: {str(db_error)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Database error'}), 500
+
+        # Move to next question
+        session['current_question'] = current_q_index + 1
+
+        if session['current_question'] < len(questions_data):
+            # More questions remaining
+            next_question = questions_data[session['current_question']]
+            next_question = {
+                'number': next_question[0],
+                'question': next_question[1],
+                'type': next_question[2]
+            }
+            response_data = {
+                'status': 'continue',
+                'next_question': next_question,
+                'question_num': session['current_question'] + 1,
+                'evaluation': convert_numpy_types(evaluation)
+            }
+            print(f"Returning continue response for question {session['current_question'] + 1}")
+            return jsonify(response_data)
+        else:
+            # Interview complete
+            response_data = {
+                'status': 'complete',
+                'evaluation': convert_numpy_types(evaluation)
+            }
+            print("Interview completed")
+            return jsonify(response_data)
+            
+    except Exception as e:
+        print(f"Unexpected error in submit_answer: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
     
-    data = request.get_json()
-    answer = data.get('answer', '').strip()
 
-    current_q_index = session['current_question']
-    questions = session['interview_questions']
-    current_question = questions[current_q_index]
-
-    #evaluate response
-    evaluation = response_evaluator.evaluate_response(
-        current_question['question'],
-        answer,
-        current_question['type']
-    )
-
-    #save response to db
-    conn = sqlite3.connect('interview_system.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO interview_qa
-        ( session_id, question_no, question_text, question_type,
-        response_text, response_score, evaluation_details)
-        VALUES (?, ?, ?, ?, ?, ?, ?)           
-    ''', (
-        session['interview_session_id'],
-        current_question['number'], 
-        current_question['question'],
-        current_question['type'], 
-        answer, 
-        float(evaluation['overall_score']),
-        json.dumps(convert_numpy_types(evaluation))
-        )
-    )
-    conn.commit()
-    conn.close()
-
-    #move to next question
-    session['current_question'] += 1
-
-    if session['current_question'] < len(questions):
-        #more questions remaining
-        next_question = questions[session['current_question']]
-        return jsonify({
-            'status': 'continue',
-            'next_question': next_question,
-            'question_num': session['current_question'] + 1,
-            'evaluation': convert_numpy_types(evaluation)
-        })
-    else:
-        # interview complete
-        return jsonify({
-            'status': 'complete',
-            'evaluation': convert_numpy_types(evaluation)
-        })
-     
 @app.route("/complete_report")
 def complete_report():
     """Complete the iterview and generate report"""
@@ -703,9 +861,7 @@ def complete_report():
     report = report_generator.generate_report(session_id)
 
     #clear session data
-    session.pop('interview_session_id', None)
-    session.pop('interview_questions', None)
-    session.pop('current_question', None)
+    session.clear() 
 
     return render_template("report.html", report=report)
 
@@ -716,7 +872,25 @@ def view_report(session_id):
     if not report:
         return "Report not found", 404
 
-    return render_template("report.html", report=report)    
-    
+    return render_template("report.html", report=report)
+
+@app.route("/debug/session")
+def debug_session():
+    """Debug route to check session data"""
+    return jsonify({
+        'session_keys' : list(session.keys()),
+        'has_interview_session': 'interview_session_id' in session,
+        'has_questions' : 'interview_questions' in session,
+        'current_question' : session.get('current_question', 'NOT set'),
+        'questions_count' : len(session.get('interview_questions', [])),
+    })
+@app.route("/test_connection")
+def test_connection():
+    """Test route to verify server is working"""
+    return jsonify({
+        'status': 'Server is running',
+        'timestamp': datetime.now().isoformat()
+    })
+   
 if __name__ =="__main__":
-    app.run(debug=True)
+    app.run(debug=True,host='0.0.0.0', port=5000)
